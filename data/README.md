@@ -14,6 +14,57 @@ research and safe to publish results on.
 - Size: **~1.1 GB compressed / ~9 GB uncompressed** (a single large CSV).
 - Label column: `Is Account Takeover`.
 
+## Is this synthetic data? (nature of the data — read before training)
+
+The Zenodo record says the feature values are "plausible but totally artificial."
+That is true, but it does **not** make this the kind of made-up synthetic data you
+should avoid training on. The distinction matters:
+
+- **Not** invented from rules/assumptions (which would risk circularity — a model
+  just re-learning the generator's assumptions).
+- It is a **privacy-preserving synthesis of real data**: the original real dataset
+  (3.3M users / ~33M logins at a Norwegian SSO) had to be deleted for privacy, so
+  the authors regenerated the *surface values* while **preserving the statistical
+  properties and per-user relationships** of the original.
+
+Why that is safe to train on: the signal RBA actually exploits is **per-user
+consistency** ("has this user been seen with this value before?"), plus the class
+imbalance and temporal patterns — and those are the properties that were preserved.
+If a real user logged in 100× from one IP/country/device, that maps to 100× from a
+single *artificial* IP/country/device here. This is why the authors show the
+synthesized set **reproduces the results obtained on the original real data**. It is
+also the standard peer-reviewed open benchmark for RBA (there is no comparable public
+login dataset *with attack labels* — privacy makes real ones unreleasable).
+
+### What is faithful vs. degraded
+
+| Faithful (rely on these) | Degraded / artificial (do NOT over-trust) |
+|---|---|
+| Per-user value consistency → all `*_seen_before` features | Real IP reputation / blocklist meaning |
+| Class imbalance (rare takeovers) | True real-world geolocation of an IP |
+| Temporal / login-frequency patterns | Absolute geo distance → literal "impossible travel" km |
+| Attack / takeover ground-truth labels | Exact timestamps (randomized), RTT positions (shuffled per geo) |
+
+Regeneration specifics (from the paper/Zenodo): IPs and user-agent strings were
+randomly generated from public data; country→ASN→IP→city were regenerated so the geo
+chain is internally consistent but does **not** match the real world; timestamps
+contain added randomness; RTTs resemble real per-geolocation distributions but were
+reassigned across users.
+
+### Implications for this project / the report
+
+- **Train on it with confidence**, and describe it accurately as *"a
+  privacy-preserving synthesized dataset that preserves the statistical properties of
+  a real 33M-login SSO service."* Cite Wiefling et al. (2022).
+- **Lean on the seen-before / per-user-consistency features**; treat the absolute
+  geo/distance features as approximate on this data (a second reason, beyond the
+  `Is Attack IP` leakage issue, to handle them carefully).
+- **Do not claim real-world geolocation/IP-reputation performance** from these
+  numbers.
+- This is exactly why the plan also uses (a) the `is_attack_ip` with/without leakage
+  experiment and (b) our own scenario generator layered on top — to *complement*, not
+  replace, this empirically-grounded backbone.
+
 ## Option A — Zenodo (no login required, recommended)
 
 Record: <https://zenodo.org/records/6782156>
