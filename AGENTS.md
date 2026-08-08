@@ -7,9 +7,10 @@ the essentials.)
 
 ## Where we are / where things are stated
 
-This is a **polyrepo**: `rba-features`, `rba-ml-training`, `docs` are separate git repos
-cloned side-by-side (org `github.com/roku-pfi`). All roadmap/status/decisions live in
-the **`docs`** repo (a sibling checkout, `../docs`):
+This is a **polyrepo**: `rba-features`, `rba-contracts`, `rba-ml-training`, `docs` are
+separate git repos cloned side-by-side (org `github.com/roku-pfi`). Model artifact
+metadata / `predict_proba` shape is frozen in `../rba-contracts` (ADR-0008). All
+roadmap/status/decisions live in the **`docs`** repo (a sibling checkout, `../docs`):
 
 - **Current status & step checklist → `../docs/plans/status.md`** (single source of truth).
 - Phase roadmap & rationale → `../docs/plans/development_plan.md` (§8 is the phase list).
