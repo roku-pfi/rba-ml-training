@@ -9,6 +9,7 @@ data/subset/
 artifacts/
 reports/
 mlruns/
+.mplcache/
 
 # Python
 __pycache__/
