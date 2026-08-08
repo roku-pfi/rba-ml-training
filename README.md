@@ -5,8 +5,9 @@ This is where Phase 1 (feasibility) happens: acquire the dataset, run EDA, build
 feature vectors via the shared `rba-features` library, train baselines, and run
 the leakage comparison.
 
-> Part of the RBA polyrepo. See `../plans/development_plan.md` (Phase 1) for the
-> full plan.
+> Part of the RBA polyrepo. See `../docs/plans/status.md` for current status and
+> `../docs/plans/development_plan.md` (Phase 1) for the full plan. Orientation for AI
+> tools: [`AGENTS.md`](AGENTS.md).
 
 ## Layout
 
@@ -14,10 +15,13 @@ the leakage comparison.
 ml/
 ├── ingest/subset.py   # Step 2: stratified per-user subset of the raw dataset
 ├── eda/explore.py     # Step 3: class balance, history depth, missingness, time span
-├── train.py           # Step 5: Freeman / LogReg / RF / LightGBM / XGBoost
-└── evaluate.py        # Step 5/6: RBA metrics + is_attack_ip leakage comparison
+├── train.py           # Step 5: Freeman / LogReg / RF / LightGBM + RBA metrics
+├── metrics.py         # RBA-appropriate metrics (PR-AUC, recall@low-FPR, by-depth)
+├── models/freeman.py  # the primary explainable likelihood-ratio scorer
+├── leakage.py         # Step 6: is_attack_ip Variant A vs B leakage experiment
+└── calibrate.py       # Freeman calibration study (smoothing sweep + per-feature weights)
 data/
-└── README.md          # HOW TO DOWNLOAD THE DATASET (start here)
+└── README_personal.md # HOW TO DOWNLOAD THE DATASET (start here)
 notebooks/             # scratch EDA only (not the source of truth)
 tests/
 ```
@@ -49,8 +53,10 @@ not the full 9 GB.
 2. **Step 3** — `python -m ml.eda.explore`
 3. **Step 4** — implement features in `../rba-features` (+ parity tests)
 4. **Step 5** — `python -m ml.train --model all`
-5. **Step 6** — `python -m ml.evaluate` and `python -m ml.train --no-attack-ip`
+5. **Step 6** — `python -m ml.leakage` (is_attack_ip A/B); `python -m ml.calibrate`
+   (Freeman calibration)
 
 ## Status
 
-Phase 1 scaffold. CLI entry points are stubbed; each is implemented in its step.
+**Phase 1 (feasibility) complete.** All CLI entry points above are implemented; see
+`../docs/plans/status.md` for the checklist and what's next (Phase 2 — freeze contracts).
