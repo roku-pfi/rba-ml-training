@@ -1,0 +1,32 @@
+# Data (never commit the dataset)
+data/raw/
+data/subset/
+*.csv
+*.parquet
+*.zip
+
+# Model artifacts / reports
+artifacts/
+reports/
+mlruns/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

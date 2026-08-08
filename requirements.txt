@@ -1,0 +1,19 @@
+# Core data / numerics
+numpy>=1.24
+pandas>=2.0
+pyarrow>=14.0          # fast parquet I/O for large subsets
+
+# Modelling
+scikit-learn>=1.3      # LogisticRegression, RandomForest, metrics, splits
+lightgbm>=4.0          # primary gradient-boosting model
+xgboost>=2.0           # secondary GBM baseline
+shap>=0.44             # per-decision explanations for the ML model
+
+# EDA / plotting
+matplotlib>=3.7
+seaborn>=0.13
+jupyter>=1.0
+
+# Shared feature library (editable, from sibling polyrepo checkout).
+# On another machine, clone rba-features next to this repo first.
+-e ../rba-features
