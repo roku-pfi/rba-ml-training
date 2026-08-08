@@ -39,7 +39,13 @@ def _fmt(x: float) -> str:
     return "nan" if x != x else f"{x:.4f}"
 
 
-def _train_baselines(Xtr, ytr):
+def build_models(ytr) -> dict:
+    """Fresh (unfitted) supervised baselines, class-imbalance-aware.
+
+    Shared by Step 5 (`_train_baselines`) and Step 6 (leakage A/B) so both use
+    identical hyper-parameters — the only thing that varies across the experiments
+    is the feature matrix, never the estimator.
+    """
     from lightgbm import LGBMClassifier
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
@@ -50,7 +56,7 @@ def _train_baselines(Xtr, ytr):
     neg = int(len(ytr) - pos)
     spw = (neg / pos) if pos else 1.0
 
-    models = {
+    return {
         "logreg": make_pipeline(
             StandardScaler(),
             LogisticRegression(max_iter=1000, class_weight="balanced"),
@@ -64,8 +70,11 @@ def _train_baselines(Xtr, ytr):
             random_state=42, n_jobs=-1, verbose=-1,
         ),
     }
+
+
+def _train_baselines(Xtr, ytr):
     fitted = {}
-    for name, m in models.items():
+    for name, m in build_models(ytr).items():
         m.fit(Xtr, ytr)
         fitted[name] = m
     return fitted
