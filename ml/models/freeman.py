@@ -17,10 +17,10 @@ High logrisk = the user is presenting values common in the population but rare/u
 for themselves → likely takeover. It needs almost no attack labels, which is why it is
 the primary scorer given only 141 positives (see docs ADR-0004).
 
-NOTE (productionisation): per-user counts are maintained here for the offline
-feasibility study. Serving this online means carrying per-value counts in the shared
-`rba_features.ProfileState` (today it stores seen-sets, not counts) — tracked as a
-Phase 3 follow-up so train/serve parity extends to the model's state too.
+NOTE (productionisation): per-user counts for online scoring live in
+`rba_features.ProfileState.freeman_counts` / `freeman_totals` (ADR-0009). Offline
+`contributions_frame` still rebuilds Counters while scanning; online uses the
+materialised profile + `score_event` / the decision-service JSON artifact.
 """
 
 from __future__ import annotations
@@ -129,6 +129,73 @@ class FreemanScorer:
     def score_frame(self, df: pd.DataFrame) -> np.ndarray:
         """Return per-row logrisk aligned to `df` order (past-only per user)."""
         return self.contributions_frame(df).sum(axis=1)
+
+    def contributions_event(
+        self,
+        values: dict[str, str],
+        user_counts: dict[str, dict[str, int]] | None = None,
+        user_totals: dict[str, int] | None = None,
+    ) -> dict[str, float]:
+        """Per-feature LLR for a single login given materialised prior counts.
+
+        `values` maps feature name → string value (same encoding as offline
+        `astype(str)`, including hour as ``\"12\"``). Missing prior counts default
+        to empty (cold-start user). Does not mutate counts — caller updates the
+        profile after scoring (compute-then-update).
+        """
+        counts = user_counts or {}
+        totals = user_totals or {}
+        out: dict[str, float] = {}
+        for f in self.features:
+            v = values[f]
+            pg = self._p_global(f, v)
+            c = counts.get(f, {}).get(v, 0)
+            t = totals.get(f, 0)
+            pu = (c + self.beta * pg) / (t + self.beta)
+            out[f] = math.log(pg) - math.log(pu)
+        return out
+
+    def score_event(
+        self,
+        values: dict[str, str],
+        user_counts: dict[str, dict[str, int]] | None = None,
+        user_totals: dict[str, int] | None = None,
+    ) -> float:
+        """Sum of per-feature LLRs for one event (native Freeman logrisk)."""
+        return float(sum(self.contributions_event(values, user_counts, user_totals).values()))
+
+    @staticmethod
+    def logrisk_to_proba(logrisk: float) -> float:
+        """Map native logrisk → risk_score in [0, 1] (contracts `logistic_logrisk`)."""
+        # Stable logistic; clamp extremes for overflow safety.
+        if logrisk >= 0:
+            z = math.exp(-logrisk)
+            return 1.0 / (1.0 + z)
+        z = math.exp(logrisk)
+        return z / (1.0 + z)
+
+    def to_serving_dict(self) -> dict:
+        """JSON-serialisable globals for decision-service (no pickle / ml import)."""
+        return {
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "features": list(self.features),
+            "global_counts": {f: dict(self.global_counts[f]) for f in self.features},
+            "global_total": {f: int(self.global_total[f]) for f in self.features},
+            "vocab": {f: int(self.vocab[f]) for f in self.features},
+        }
+
+    @classmethod
+    def from_serving_dict(cls, data: dict) -> "FreemanScorer":
+        obj = cls(
+            alpha=float(data["alpha"]),
+            beta=float(data["beta"]),
+            features=tuple(data["features"]),
+        )
+        obj.global_counts = {f: Counter(c) for f, c in data["global_counts"].items()}
+        obj.global_total = {f: int(t) for f, t in data["global_total"].items()}
+        obj.vocab = {f: int(v) for f, v in data["vocab"].items()}
+        return obj
 
 
 class WeightedFreemanScorer:
