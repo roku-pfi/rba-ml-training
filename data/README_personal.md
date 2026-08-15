@@ -1,5 +1,7 @@
 # Dataset acquisition — Wiefling RBA login dataset
 
+> Canonical copy: [`README.md`](README.md) (same content). Keep both in sync.
+
 This folder holds the raw and derived data used for Phase 1 (feasibility). **The
 data itself is never committed** (see `.gitignore`). Follow the steps below on the
 machine where you'll do the training.
