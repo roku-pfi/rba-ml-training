@@ -6,8 +6,12 @@ feature vectors via shared `rba-features`, train Freeman + reference baselines,
 run the leakage comparison, calibrate Freeman, export a JSON serving artifact.
 
 This repo is **not** on the login path. The PDP scores with the exported JSON
-(`rba-decision-service/artifacts/freeman-0.1.0.json`). Features are never
+artifacts — `rba-decision-service/artifacts/freeman-0.2.0.json` (primary) and
+`logreg-0.1.0.json` (supervised second opinion, ADR-0027). Features are never
 re-implemented here.
+
+> Current numbers: [`../docs/findings/2026-08-20-step5-rerun.md`](../docs/findings/2026-08-20-step5-rerun.md).
+> The 2026-08-08 baselines note predates ADR-0027 and is superseded.
 
 > Status: [`../docs/plans/status.md`](../docs/plans/status.md) — Phase 1 complete.
 > Plan: `../docs/plans/development_plan.md` (Phase 1). AI: [`AGENTS.md`](AGENTS.md).
@@ -98,15 +102,23 @@ python -m ml.leakage
 # Freeman calibration (β 10 → 5; per-feature weights rejected)
 python -m ml.calibrate
 
-# Export JSON for the PDP
+# Export JSON for the PDP — primary scorer
 python -m ml.export_freeman \
   --pickle artifacts/step5/freeman.pkl \
-  --out artifacts/serving/freeman-0.1.0.json \
-  --beta 5.0
+  --out artifacts/serving/freeman-0.2.0.json \
+  --beta 5.0 --model-version freeman-0.2.0
+
+# Export JSON for the PDP — supervised second opinion (ADR-0027).
+# Re-derives the 1%-FPR threshold on the same split and bakes it into the
+# artifact, so serving never guesses an operating point.
+python -m ml.export_logreg --out artifacts/serving/logreg-0.1.0.json
 ```
 
-Copy the serving JSON into `../rba-decision-service/artifacts/` when refreshing
-the online scorer.
+Copy both serving JSONs into `../rba-decision-service/artifacts/` when
+refreshing the online scorers. A retrain that moves the supervised operating
+point must also update
+[`../docs/findings/2026-08-19-supervised-escalation-and-failed-logins.md`](../docs/findings/2026-08-19-supervised-escalation-and-failed-logins.md)
+and the pinned assertion in `rba-decision-service/tests/test_escalation.py`.
 
 Cited write-ups:
 
