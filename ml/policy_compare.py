@@ -20,6 +20,8 @@ Policies compared:
 - adaptive      : the engine as deployed (ACTIVE, starter policy).
 - adaptive_no_block : the same, with CRITICAL stepping up instead of blocking;
                     only the lockout rule still blocks.
+- adaptive_default  : the defaults adopted from this study (ADR-0040): LOW <= 0.40
+                    and CRITICAL stepping up.
 - freeman_only  : ablation, the score and bands without rules or second opinion.
 
 Per policy: legitimate friction (any step-up or block), legitimate blocks, and
@@ -57,7 +59,7 @@ from rba_features.travel import compute_travel
 EVENT_COLS = ["login_timestamp", "ip_address", "asn", "country", "device_type", "os", "browser", "login_successful"]
 # The decision service's defaults (config.py).
 BURST, LOCKOUT = 3, 10
-POLICIES = ("password_only", "always_mfa", "adaptive", "adaptive_no_block", "freeman_only")
+POLICIES = ("password_only", "always_mfa", "adaptive", "adaptive_no_block", "adaptive_default", "freeman_only")
 LOW_CUTS = (0.10, 0.20, 0.30, 0.40, 0.50, 0.60)
 
 
@@ -120,9 +122,11 @@ def actions_for(frame: pd.DataFrame, name: str, policy: TenantPolicy) -> np.ndar
         return np.array([Action.ALLOW.value] * len(frame))
     if name == "always_mfa":
         return np.array([Action.REQUIRE_MFA.value] * len(frame))
+    if name == "adaptive_default":
+        policy = starter_policy(0.40, critical=Action.REAUTHENTICATE)
     if name == "adaptive_no_block":
         policy = policy.model_copy(update={"level_to_action": policy.level_to_action.model_copy(update={"CRITICAL": Action.REAUTHENTICATE})})
-    rules = name in ("adaptive", "adaptive_no_block")
+    rules = name in ("adaptive", "adaptive_no_block", "adaptive_default")
     return np.array([decide(r, policy, rules=rules).value for r in frame.itertuples()])
 
 
@@ -251,7 +255,7 @@ def main() -> None:
     }
     Path(args.out, "results.json").write_text(json.dumps({"meta": meta, "policies": results, "sweep_low_max": sweep, "adaptive_by_depth": by_depth}, indent=2))
 
-    label = {"password_only": "Solo contraseña", "always_mfa": "MFA siempre", "adaptive": "Adaptativa (motor)", "adaptive_no_block": "Adaptativa sin bloqueo", "freeman_only": "Solo Freeman (ablación)"}
+    label = {"password_only": "Solo contraseña", "always_mfa": "MFA siempre", "adaptive": "Adaptativa (motor)", "adaptive_no_block": "Adaptativa sin bloqueo", "adaptive_default": "Adaptativa (nueva por defecto)", "freeman_only": "Solo Freeman (ablación)"}
     lines = [
         "# D-2 — Policy comparison on the held-out logins",
         "",
