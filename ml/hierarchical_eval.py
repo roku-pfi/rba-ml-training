@@ -24,7 +24,7 @@ from rba_features import schema
 
 from ml.metrics import evaluate, recall_at_fpr
 from ml.models.freeman import FreemanScorer
-from ml.models.hierarchical import HIERARCHIES, fit_lambdas, global_tables, level_matrix, logrisk, prep, rooted
+from ml.models.hierarchical import HIERARCHIES, chain_from_stats, chain_logrisk, chain_stats, fit_betas, fit_lambdas, global_tables, level_matrix, logrisk, prep, rooted
 
 LABEL = schema.LABEL
 
@@ -62,6 +62,9 @@ def main() -> None:
         lambdas[name] = (lam_g, fit_lambdas(u[warm]))
         lambdas_rooted[name] = (lam_g, fit_lambdas(rooted(u, g @ lam_g)[warm]))
 
+    # --- chain-rule β per level, by likelihood on the same held-out slice (no labels)
+    betas = fit_betas(chain_stats(train, train[early]), ~early)
+
     # --- test scoring
     lv = level_matrix(d, global_tables(d[d["split"] == "train"]))
     hier = logrisk(lv, lambdas)
@@ -92,6 +95,8 @@ def main() -> None:
         "hierarchical + p(u) term (Eq. 7)": hier + user_term,
         "hierarchical, user rooted at global": logrisk(lv, lambdas_rooted, root_at_global=True),
         "hierarchical, rooted, + hour": logrisk(lv, lambdas_rooted, root_at_global=True) + hour,
+        "chain-rule Freeman (Dirichlet at every level)": chain_logrisk(d, d[d["split"] == "train"]),
+        "chain-rule Freeman, β per level fitted": chain_from_stats(chain_stats(d, d[d["split"] == "train"]), betas),
     }
 
     lines = ["# Hierarchical Freeman (paper, Sect. II-C) vs flat Freeman", "",
@@ -104,6 +109,7 @@ def main() -> None:
     unseen = (g_test[:, -1] == 0)
     lines.append(f"- takeover IPs never seen in the training period: {unseen[test & (y == 1)].mean():.0%}"
                  f" (legitimate test logins: {unseen[test & (y == 0)].mean():.0%})")
+    lines.append(f"- chain β per level (fitted): " + "; ".join(f"{n} {np.round(b, 3).tolist()}" for n, b in betas.items()))
     lines += ["", "| variant | ROC-AUC | recall@1%FPR | TPR@10%FPR (paper's metric) |", "|---|---|---|---|"]
     for name, s in variants.items():
         r = evaluate(y[test], s[test], depth[test], 0.01)

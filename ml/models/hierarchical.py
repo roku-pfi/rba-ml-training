@@ -112,14 +112,17 @@ def global_tables(d: pd.DataFrame) -> dict[str, _Tables]:
     return tables
 
 
-def level_matrix(d: pd.DataFrame, tables: dict[str, _Tables] | None) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+def level_matrix(d: pd.DataFrame, tables: dict[str, _Tables] | None,
+                 learn: np.ndarray | None = None) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Per hierarchy: (global level probs, user level probs) for every row, past-only per user.
 
     `tables` None means global probabilities are not needed (only user rows).
     Rows are in `d` order; a user's first login has an all-zero user row.
+    `learn` False marks probes (simulated attackers): scored, never folded in.
     """
     order = np.argsort(d["login_timestamp"].to_numpy(), kind="mergesort")
     users = d["user_id"].to_numpy()
+    learn = np.ones(len(d), dtype=bool) if learn is None else learn
     out = {}
     for name, cols in HIERARCHIES.items():
         p = paths(d, name)
@@ -131,7 +134,8 @@ def level_matrix(d: pd.DataFrame, tables: dict[str, _Tables] | None) -> dict[str
                 g[i] = tables[name].level_probs(p[i])
             t = per_user.setdefault(users[i], _Tables(len(cols)))
             u[i] = t.level_probs(p[i])
-            t.add(p[i])
+            if learn[i]:
+                t.add(p[i])
         out[name] = (g, u)
     return out
 
@@ -163,3 +167,122 @@ def logrisk(levels: dict[str, tuple[np.ndarray, np.ndarray]], lambdas: dict[str,
         contrib = np.where(cold, 0.0, np.log(np.maximum(pg, 1e-300)) - np.log(np.maximum(pu, 1e-300)))
         total = contrib if total is None else total + contrib
     return total
+
+
+# --- Chain-rule Freeman: flat Freeman applied to each level's conditional ---------
+#
+# p(path) = Π_k q(h_k | h_{k-1}). Global: q_g = (c_g(h_k) + α) / (c_g(h_{k-1}) +
+# α (V(h_{k-1}) + 1)), V = distinct children. User: q_u = (c_u(h_k) + β q_g) /
+# (c_u(h_{k-1}) + β), Freeman's Dirichlet toward the population at every level.
+# logrisk = Σ_k log q_g − log q_u: a novelty adds log((c_u(parent) + β) / β) once,
+# at the level where the login leaves the user's history; below that level the
+# user's counts are empty and the terms vanish.
+
+
+class _ChainTables(_Tables):
+    """_Tables plus distinct children per prefix (for the global smoothing)."""
+
+    __slots__ = ("children",)
+
+    def __init__(self, depth: int) -> None:
+        super().__init__(depth)
+        self.children: dict[tuple, set] = defaultdict(set)
+
+    def add(self, path: tuple) -> None:
+        super().add(path)
+        for k in range(self.depth):
+            self.children[path[:k]].add(path[k])
+
+    def conditionals(self, path: tuple, alpha: float) -> list[float]:
+        out = []
+        for k in range(1, self.depth + 1):
+            parent = path[: k - 1]
+            c_parent = self.total if k == 1 else self.count.get(parent, 0)
+            v = len(self.children.get(parent, ()))
+            out.append((self.count.get(path[:k], 0) + alpha) / (c_parent + alpha * (v + 1)))
+        return out
+
+
+def chain_logrisk(d: pd.DataFrame, train: pd.DataFrame, beta: float = 5.0, alpha: float = 0.5,
+                  learn: np.ndarray | None = None, per_level: bool = False):
+    """Per-row chain-rule logrisk (sum over hierarchies), users past-only.
+
+    `per_level` also returns {hierarchy: (n_rows, depth) contributions}.
+    """
+    learn = np.ones(len(d), dtype=bool) if learn is None else learn
+    order = np.argsort(d["login_timestamp"].to_numpy(), kind="mergesort")
+    users = d["user_id"].to_numpy()
+    total = np.zeros(len(d))
+    levels = {}
+    for name, cols in HIERARCHIES.items():
+        g = _ChainTables(len(cols))
+        for path in paths(train, name):
+            g.add(path)
+        p = paths(d, name)
+        contrib = np.zeros((len(d), len(cols)))
+        per_user: dict[str, _Tables] = {}
+        for i in order:
+            t = per_user.setdefault(users[i], _Tables(len(cols)))
+            if t.total:
+                qg = g.conditionals(p[i], alpha)
+                for k in range(1, len(cols) + 1):
+                    c_parent = t.total if k == 1 else t.count.get(p[i][: k - 1], 0)
+                    qu = (t.count.get(p[i][:k], 0) + beta * qg[k - 1]) / (c_parent + beta)
+                    contrib[i, k - 1] = math.log(qg[k - 1]) - math.log(qu)
+            if learn[i]:
+                t.add(p[i])
+        total += contrib.sum(axis=1)
+        levels[name] = contrib
+    return (total, levels) if per_level else total
+
+
+def chain_stats(d: pd.DataFrame, train: pd.DataFrame, alpha: float = 0.5,
+                learn: np.ndarray | None = None) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Per hierarchy and level: (c_u(h_k), c_u(h_{k-1}), q_g(h_k | h_{k-1})), users past-only."""
+    learn = np.ones(len(d), dtype=bool) if learn is None else learn
+    order = np.argsort(d["login_timestamp"].to_numpy(), kind="mergesort")
+    users = d["user_id"].to_numpy()
+    out = {}
+    for name, cols in HIERARCHIES.items():
+        g = _ChainTables(len(cols))
+        for path in paths(train, name):
+            g.add(path)
+        p = paths(d, name)
+        depth = len(cols)
+        cc, cp, qg = (np.zeros((len(d), depth)) for _ in range(3))
+        per_user: dict[str, _Tables] = {}
+        for i in order:
+            t = per_user.setdefault(users[i], _Tables(depth))
+            qg[i] = g.conditionals(p[i], alpha)
+            for k in range(1, depth + 1):
+                cp[i, k - 1] = t.total if k == 1 else t.count.get(p[i][: k - 1], 0)
+                cc[i, k - 1] = t.count.get(p[i][:k], 0)
+            if learn[i]:
+                t.add(p[i])
+        out[name] = (cc, cp, qg)
+    return out
+
+
+def chain_from_stats(stats, betas: dict[str, np.ndarray], per_level: bool = False):
+    """logrisk from chain_stats; a level whose parent the user never saw adds 0."""
+    total, levels = None, {}
+    for name, (cc, cp, qg) in stats.items():
+        b = betas[name][None, :]
+        contrib = np.where(cp > 0, np.log(qg) - np.log((cc + b * qg) / (cp + b)), 0.0)
+        levels[name] = contrib
+        total = contrib.sum(axis=1) if total is None else total + contrib.sum(axis=1)
+    return (total, levels) if per_level else total
+
+
+def fit_betas(stats, rows: np.ndarray, grid=np.logspace(-3, 2, 61)) -> dict[str, np.ndarray]:
+    """Per level, the β maximising the likelihood of held-out legitimate logins under q_u."""
+    out = {}
+    for name, (cc, cp, qg) in stats.items():
+        betas = []
+        for k in range(cc.shape[1]):
+            m = rows & (cp[:, k] > 0)
+            c, n, q = cc[m, k], cp[m, k], qg[m, k]
+            ll = [np.sum(np.log((c + b * q) / (n + b))) for b in grid]
+            betas.append(float(grid[int(np.argmax(ll))]))
+        out[name] = np.array(betas)
+    return out
