@@ -194,7 +194,9 @@ def main() -> None:
         hour_c[i] = math.log(pg) - math.log((c[hours[i]] + flat_sc.beta * pg) / (t + flat_sc.beta))
         if learn[i]:
             c[hours[i]] += 1
-    models = {"flat freeman-0.3.0": flat, "hierarchical, rooted (λ fitted)": hier,
+    agent_sc = FreemanScorer(beta=5.0, features=("device_type", "os", "browser")).fit(df[df["split"] == "train"])
+    hybrid = logrisk(lv, uniform, ["network"], root_at_global=True) + flat_scores(agent_sc, allrows, learn)
+    models = {"flat freeman-0.3.0": flat, "hybrid: rooted network + flat agent": hybrid, "hierarchical, rooted (λ fitted)": hier,
               "hierarchical, rooted (uniform λ)": hier_u,
               "hierarchical, rooted (uniform λ) + hour": hier_u + hour_c,
               "chain-rule Freeman, β fitted": chain_from_stats(

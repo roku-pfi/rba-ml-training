@@ -96,6 +96,8 @@ def main() -> None:
         "hierarchical, user rooted at global": logrisk(lv, lambdas_rooted, root_at_global=True),
         "hierarchical, rooted, + hour": logrisk(lv, lambdas_rooted, root_at_global=True) + hour,
         "chain-rule Freeman (Dirichlet at every level)": chain_logrisk(d, d[d["split"] == "train"]),
+        "hybrid: rooted network + flat agent": logrisk(lv, {n: (np.full(4, .25), np.full(4, .25)) for n in HIERARCHIES}, ["network"], root_at_global=True)
+            + FreemanScorer(beta=5.0, features=("device_type", "os", "browser")).fit(df[df["split"] == "train"]).score_frame(df),
         "chain-rule Freeman, β per level fitted": chain_from_stats(chain_stats(d, d[d["split"] == "train"]), betas),
     }
 

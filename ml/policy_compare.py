@@ -48,6 +48,7 @@ import pandas as pd
 from rba_contracts import Action, BasePolicy, EngineMode, LevelToAction, RiskLevel, ScoreBand, TenantPolicy
 from rba_contracts.policy import apply_policy
 from rba_decision_service.scoring.freeman import FreemanOnlineScorer
+from rba_decision_service.scoring.hierarchical import load_scorer
 from rba_decision_service.scoring.logreg import LogRegOnlineScorer
 from rba_decision_service.services.escalate import escalate
 from rba_decision_service.services.reasons import failed_login_signal
@@ -202,7 +203,7 @@ def main() -> None:
     last_pos = full.loc[full[schema.LABEL], "login_timestamp"].max()
     df = full[full["login_timestamp"] <= last_pos].reset_index(drop=True)
     cut = df["login_timestamp"].quantile(args.train_frac)
-    freeman = FreemanOnlineScorer.from_path(Path(args.freeman))
+    freeman = load_scorer(Path(args.freeman))
     logreg = LogRegOnlineScorer.from_path(Path(args.logreg))
     # The replay is the slow part; its output only depends on the data and models.
     cache = Path(args.out, "replay.parquet")

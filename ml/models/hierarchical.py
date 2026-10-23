@@ -96,7 +96,8 @@ def prep(df: pd.DataFrame) -> pd.DataFrame:
     d["hour"] = pd.to_datetime(d["login_timestamp"]).dt.hour
     for cols in HIERARCHIES.values():
         for c in cols:
-            d[c] = d[c].astype(str)
+            # "-" for missing, as rba_features.hierarchy.hier_path encodes it online.
+            d[c] = d[c].astype(object).where(d[c].notna(), "-").astype(str)
     return d
 
 
