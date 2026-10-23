@@ -30,6 +30,7 @@ from collections import Counter
 
 import numpy as np
 import pandas as pd
+from rba_features.canonical import browser_family, os_family
 
 # Categorical attributes scored by Freeman. Region/city excluded (~42% missing and
 # synthetic geo); RTT excluded (~94% missing). `hour` is derived from the timestamp.
@@ -58,9 +59,14 @@ class FreemanScorer:
     """
 
     def __init__(self, alpha: float = 0.5, beta: float = 5.0,
-                 features: tuple[str, ...] = FREEMAN_FEATURES) -> None:
+                 features: tuple[str, ...] = FREEMAN_FEATURES,
+                 population_prior_strength: float | None = None) -> None:
         self.alpha = alpha
         self.beta = beta
+        # kappa (ADR-0042): online, p_global blends the deployment's own learned
+        # logins with this training population, which counts as kappa logins.
+        # None = training population only (offline evaluation always is).
+        self.population_prior_strength = population_prior_strength
         self.features = list(features)
         self.global_counts: dict[str, Counter] = {}
         self.global_total: dict[str, int] = {}
@@ -70,6 +76,11 @@ class FreemanScorer:
     def _prep(df: pd.DataFrame) -> pd.DataFrame:
         d = df.copy()
         d["hour"] = pd.to_datetime(d["login_timestamp"]).dt.hour
+        # Families, as the hosted login reports them (rba_features.canonical).
+        if "browser" in d:
+            d["browser"] = d["browser"].map(browser_family)
+        if "os" in d:
+            d["os"] = d["os"].map(os_family)
         return d
 
     def fit(self, train_df: pd.DataFrame) -> "FreemanScorer":
@@ -81,10 +92,14 @@ class FreemanScorer:
             self.vocab[f] = len(counts)
         return self
 
-    def _p_global(self, f: str, v: str) -> float:
+    def _p_global(self, f: str, v: str, population=None) -> float:
         c = self.global_counts[f].get(v, 0)
         # +1 in the denominator vocab reserves mass for values unseen in training.
-        return (c + self.alpha) / (self.global_total[f] + self.alpha * (self.vocab[f] + 1))
+        p_train = (c + self.alpha) / (self.global_total[f] + self.alpha * (self.vocab[f] + 1))
+        kappa = self.population_prior_strength
+        if population is None or kappa is None:
+            return p_train
+        return (population.count(f, v) + kappa * p_train) / (population.total + kappa)
 
     def contributions_frame(self, df: pd.DataFrame) -> np.ndarray:
         """Per-row, per-feature log-likelihood-ratio, aligned to `df` order.
@@ -135,20 +150,22 @@ class FreemanScorer:
         values: dict[str, str],
         user_counts: dict[str, dict[str, int]] | None = None,
         user_totals: dict[str, int] | None = None,
+        population=None,
     ) -> dict[str, float]:
         """Per-feature LLR for a single login given materialised prior counts.
 
         `values` maps feature name → string value (same encoding as offline
         `astype(str)`, including hour as ``\"12\"``). Missing prior counts default
         to empty (cold-start user). Does not mutate counts — caller updates the
-        profile after scoring (compute-then-update).
+        profile after scoring (compute-then-update). `population` is the
+        deployment's rba_features.population.PopulationCounts, or None.
         """
         counts = user_counts or {}
         totals = user_totals or {}
         out: dict[str, float] = {}
         for f in self.features:
             v = values[f]
-            pg = self._p_global(f, v)
+            pg = self._p_global(f, v, population)
             c = counts.get(f, {}).get(v, 0)
             t = totals.get(f, 0)
             pu = (c + self.beta * pg) / (t + self.beta)
@@ -160,9 +177,12 @@ class FreemanScorer:
         values: dict[str, str],
         user_counts: dict[str, dict[str, int]] | None = None,
         user_totals: dict[str, int] | None = None,
+        population=None,
     ) -> float:
         """Sum of per-feature LLRs for one event (native Freeman logrisk)."""
-        return float(sum(self.contributions_event(values, user_counts, user_totals).values()))
+        return float(
+            sum(self.contributions_event(values, user_counts, user_totals, population).values())
+        )
 
     @staticmethod
     def logrisk_to_proba(logrisk: float) -> float:
@@ -183,6 +203,7 @@ class FreemanScorer:
             "global_counts": {f: dict(self.global_counts[f]) for f in self.features},
             "global_total": {f: int(self.global_total[f]) for f in self.features},
             "vocab": {f: int(self.vocab[f]) for f in self.features},
+            "population_prior_strength": self.population_prior_strength,
         }
 
     @classmethod
@@ -191,6 +212,7 @@ class FreemanScorer:
             alpha=float(data["alpha"]),
             beta=float(data["beta"]),
             features=tuple(data["features"]),
+            population_prior_strength=data.get("population_prior_strength"),
         )
         obj.global_counts = {f: Counter(c) for f, c in data["global_counts"].items()}
         obj.global_total = {f: int(t) for f, t in data["global_total"].items()}

@@ -30,6 +30,13 @@ def main() -> None:
         default=None,
         help="Override Dirichlet beta (default: keep pickle value).",
     )
+    parser.add_argument(
+        "--population-prior-strength",
+        type=float,
+        default=None,
+        help="kappa (ADR-0042): weight of the training population, in logins, "
+        "against the deployment's own learned logins. Unset: training only.",
+    )
     parser.add_argument("--model-version", default="freeman-0.1.0")
     args = parser.parse_args()
 
@@ -38,6 +45,8 @@ def main() -> None:
 
     if args.beta is not None:
         scorer.beta = float(args.beta)
+    # Pickles from before ADR-0042 lack the attribute.
+    scorer.population_prior_strength = args.population_prior_strength
 
     serving = scorer.to_serving_dict()
     payload = {
@@ -47,7 +56,11 @@ def main() -> None:
         "input_kind": "freeman_categoricals",
         "feature_schema_version": "1.0.0",
         "freeman_features": serving["features"],
-        "hyperparameters": {"alpha": serving["alpha"], "beta": serving["beta"]},
+        "hyperparameters": {
+            "alpha": serving["alpha"],
+            "beta": serving["beta"],
+            "population_prior_strength": serving["population_prior_strength"],
+        },
         "proba_mapping": {
             "method": "logistic_logrisk",
             "detail": "risk_score = 1 / (1 + exp(-logrisk))",

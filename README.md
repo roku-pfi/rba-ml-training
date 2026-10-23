@@ -103,15 +103,20 @@ python -m ml.leakage
 python -m ml.calibrate
 
 # Export JSON for the PDP — primary scorer
+python -m ml.train --model all --out artifacts/step5-families --report reports/step5/metrics-families.md
 python -m ml.export_freeman \
-  --pickle artifacts/step5/freeman.pkl \
-  --out artifacts/serving/freeman-0.2.0.json \
-  --beta 5.0 --model-version freeman-0.2.0
+  --pickle artifacts/step5-families/freeman.pkl \
+  --out artifacts/serving/freeman-0.3.0.json \
+  --beta 5.0 --population-prior-strength 100 --model-version freeman-0.3.0
 
 # Export JSON for the PDP — supervised second opinion (ADR-0027).
 # Re-derives the 1%-FPR threshold on the same split and bakes it into the
 # artifact, so serving never guesses an operating point.
-python -m ml.export_logreg --out artifacts/serving/logreg-0.1.0.json
+python -m ml.export_logreg --pickle artifacts/step5-families/logreg.pkl \
+  --out artifacts/serving/logreg-0.2.0.json --model-version logreg-0.2.0
+
+# Population shift + browser/OS families (ADR-0042, finding 2026-10-23)
+python -m ml.population_shift
 ```
 
 Copy both serving JSONs into `../rba-decision-service/artifacts/` when
