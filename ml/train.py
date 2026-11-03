@@ -3,7 +3,8 @@
 Primary model: Freeman likelihood-ratio scorer (unsupervised-ish; learns "normal").
 Reference baselines (supervised on the rare is_account_takeover label): LogisticRegression,
 RandomForest, LightGBM. Uses the shared rba_features vectors (train/serve parity) and a
-strictly chronological 70/15/15 split. Metrics are RBA-appropriate (PR-AUC, recall @ low
+strictly chronological 70/30 train/test split (no validation set: see ml/backtest.py).
+Metrics are RBA-appropriate (PR-AUC, recall @ low
 FPR, challenge rate) and broken down by history depth. See docs ADR-0004.
 
 Usage:
