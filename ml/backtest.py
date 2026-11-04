@@ -15,6 +15,11 @@ A second table checks whether a threshold carries over: set at 1% FPR on a
 calibration slice scored like unseen data (tables from before it), then
 applied to the evaluation window.
 
+A third does the same for the supervised second opinion (logreg-0.2.0,
+ADR-0027): refitted on each training window's labels, measured on the next
+window, and its shipped threshold (0.869, read off the test split) applied
+unchanged to see what rate it actually fires at.
+
 Usage (from rba-ml-training/, venv active):
 
     python -m ml.backtest --report reports/backtest.md
@@ -30,8 +35,12 @@ import pandas as pd
 from rba_features import schema
 from sklearn.metrics import roc_auc_score
 
+from rba_features.features import FEATURE_NAMES
+
+from ml.featurize import build_features
 from ml.models.freeman import FreemanScorer
 from ml.metrics import recall_at_fpr
+from ml.train import build_models
 from ml.models.hierarchical import (
     HIERARCHIES,
     fit_lambdas,
@@ -43,6 +52,7 @@ from ml.models.hierarchical import (
 )
 
 LABEL = schema.LABEL
+SHIPPED_LOGREG_THRESHOLD = 0.869127494041951  # artifacts/serving/logreg-0.2.0.json
 UNIFORM = {n: (np.full(4, 0.25), np.full(4, 0.25)) for n in HIERARCHIES}
 # (train up to, evaluate up to) as quantiles of the label window, in time.
 FOLDS = [(0.40, 0.70), (0.50, 0.70), (0.30, 0.50)]
@@ -94,6 +104,44 @@ def by_user_interval(y, flagged, users, n_boot=2000, seed=7) -> tuple[float, flo
         pick = rng.integers(0, len(ids), len(ids))
         out.append(hits[pick].sum() / max(counts[pick].sum(), 1))
     return float(np.quantile(out, 0.025)), float(np.quantile(out, 0.975))
+
+
+def logreg_section(df: pd.DataFrame, fpr: float) -> list[str]:
+    """Supervised second opinion: refit per fold, in-window recall, shipped cut-off."""
+    feat = build_features(df)  # past-only per user, so one pass serves every fold
+    X = feat[list(FEATURE_NAMES)]
+    ts = feat["login_timestamp"]
+    y = feat[LABEL].to_numpy().astype(int)
+    users = feat["user_id"].to_numpy()
+    out = [
+        "",
+        "## C. Supervised second opinion (logreg-0.2.0)",
+        "",
+        "Refitted on each training window's labels (same estimator as Step 5). "
+        f"Recall at {fpr:.0%} FPR of the evaluation window, then the shipped "
+        f"threshold {SHIPPED_LOGREG_THRESHOLD:.3f} applied unchanged.",
+        "",
+        "| fold | takeovers | ROC-AUC | recall@1%FPR (95% CI) | shipped cut-off: FPR | shipped cut-off: recall |",
+        "|---|---|---|---|---|---|",
+    ]
+    for fit_q, eval_q in [*FOLDS, REFERENCE]:
+        fit_cut, eval_cut = ts.quantile(fit_q), ts.quantile(eval_q)
+        train = (ts < fit_cut).to_numpy()
+        held = ((ts >= fit_cut) & (ts <= eval_cut)).to_numpy()
+        model = build_models(y[train])["logreg"].fit(X[train], y[train])
+        sh, yh = model.predict_proba(X[held])[:, 1], y[held]
+        op = recall_at_fpr(yh, sh, fpr)
+        flagged = sh >= op.threshold
+        lo, hi = by_user_interval(yh, flagged, users[held])
+        fixed = sh >= SHIPPED_LOGREG_THRESHOLD
+        tag = f"{fit_q:.0%} → {eval_q:.0%}" + (" (Step 5 test, used for choices)" if (fit_q, eval_q) == REFERENCE else "")
+        out.append(
+            f"| {tag} | {int(yh.sum())} | {roc_auc_score(yh, sh):.3f} | "
+            f"{op.recall:.2f} ({int(flagged[yh == 1].sum())}/{int(yh.sum())}; {lo:.2f}–{hi:.2f}) | "
+            f"{fixed[yh == 0].mean():.2%} | {fixed[yh == 1].mean():.2f} ({int(fixed[yh == 1].sum())}/{int(yh.sum())}) |"
+        )
+        print(out[-1], flush=True)
+    return out
 
 
 def main() -> None:
@@ -164,6 +212,7 @@ def main() -> None:
         )
         print(transfer[-1], flush=True)
     lines += transfer
+    lines += logreg_section(df, args.fpr)
 
     os.makedirs(os.path.dirname(args.report) or ".", exist_ok=True)
     with open(args.report, "w") as fh:
