@@ -51,7 +51,6 @@ from rba_decision_service.scoring.freeman import FreemanOnlineScorer
 from rba_decision_service.scoring.hierarchical import load_scorer
 from rba_decision_service.scoring.logreg import LogRegOnlineScorer
 from rba_decision_service.services.escalate import escalate
-from rba_decision_service.services.reasons import failed_login_signal
 from rba_features import schema
 from rba_features.features import compute_features, update_profile
 from rba_features.profile import ProfileState
@@ -60,8 +59,21 @@ from rba_features.travel import compute_travel
 EVENT_COLS = ["login_timestamp", "ip_address", "asn", "country", "device_type", "os", "browser", "login_successful"]
 # The decision service's defaults (config.py).
 BURST, LOCKOUT = 3, 10
+
+
+def failed_login_signal(failures: int, *, burst_threshold: int, lockout_threshold: int):
+    """The pre-ADR-0045 per-account failure rule the cached replay was made with
+    (the service now counts per source and per context instead). The dataset
+    holds no failed attempts on the scored logins, so it rarely fires."""
+    if failures >= lockout_threshold:
+        return None, Action.BLOCK
+    if failures >= burst_threshold:
+        return None, Action.REAUTHENTICATE
+    return None
 POLICIES = ("password_only", "always_mfa", "adaptive", "adaptive_no_block", "adaptive_default", "freeman_only")
-LOW_CUTS = (0.10, 0.20, 0.30, 0.40, 0.50, 0.60)
+# Every 0.05: the first logins of a user (no history) all score just above
+# 0.40, so a coarser grid draws their step as a slope.
+LOW_CUTS = tuple(round(0.05 * i, 2) for i in range(1, 15))
 
 
 def starter_policy(low_max: float = 0.30, *, critical: Action = Action.BLOCK) -> TenantPolicy:
